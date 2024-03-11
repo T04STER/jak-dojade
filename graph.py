@@ -6,6 +6,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from decimal import Decimal
 from numbers import Number
+import time
 from typing import Any, Callable, Dict, Generator, List, Optional, Tuple
 from queue import SimpleQueue
 from unittest.mock import Mock
@@ -74,28 +75,22 @@ class Graph:
     def __init__(self, filepath: str):
         self.graph: Dict[str, Node] = {}
         connections = pd.read_csv(filepath, low_memory=False)
-        bus_stop_tuples = set(connections[['start_stop']+['start_stop_lat']+['start_stop_lon']].itertuples(index=False, name=None))
-        bus_stop_tuples.update(set(connections[['end_stop']+['end_stop_lat']+['end_stop_lon']].itertuples(index=False, name=None)))
-
-        stops = set(connections[['start_stop']+['start_stop_lat']+['start_stop_lon']].itertuples(index=False, name=None))
-        stops.update(set(connections[['end_stop']+['end_stop_lat']+['end_stop_lon']].itertuples(index=False, name=None)))
         
-        # group stops to average locations
-        bus_stop_groups = defaultdict(lambda: list())
-        for stop in stops:
-            bus_stop_groups[stop[0]].append((stop[1], stop[2]))
+        start_stops = connections[['start_stop', 'start_stop_lat', 'start_stop_lon']]
+        start_stops.columns = ['stop', 'lat', 'lon']
+        end_stops = connections[['end_stop', 'end_stop_lat', 'end_stop_lon']]
+        end_stops.columns = ['stop', 'lat', 'lon']
 
-        # average locations
-        for stop_name, locations in bus_stop_groups.items():
-            lon_avg = 0
-            lat_avg = 0
-            for lat, lon in locations:
-                lon_avg += lat
-                lat_avg += lon
-            location_count = len(locations)
-            lon_avg /= location_count
-            lat_avg /= location_count
-            self.graph[stop_name] = Node(stop_name, lat_avg, lon_avg, [])
+        stops_concat = pd.concat(
+            [
+                start_stops,
+                end_stops
+            ])
+        stops_concat.drop_duplicates()
+        stop_groups_df = stops_concat.groupby('stop').mean()
+        stop_groups = list(stop_groups_df.itertuples(index=True, name=None))
+        for stop in stop_groups:
+            self.graph[stop[0]] = Node(*stop, [])
         
         for connection in connections.to_numpy():  
             company = connection[1]
@@ -190,8 +185,11 @@ class Graph:
 
 
 if __name__ == "__main__":
+    d = time.time()
+    print(f"Started at: {d}")
     graph = Graph('connection_graph.csv')
-    
+    ld = time.time()
+    print(f"Loaded graph at: {ld} delta {ld-d}")
     def print_edge(node: Node, edge: Edge):
         print(f"{node.stop_name} -> {edge.dest.stop_name}" )
     bus_stops = list(graph.graph.keys())
@@ -205,3 +203,5 @@ if __name__ == "__main__":
     print(n.stop_name, end="")
     for edge in path:
         print(f" {edge.departure_time.time_str} -> {edge.arrival_time.time_str} {edge.dest.stop_name} [{edge.line}]")
+    e=time.time()
+    print(f"Finished at: { e }, it took {e-d}")
