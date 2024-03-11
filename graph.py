@@ -2,9 +2,12 @@
     Class for Graph, Nodes and Edges
 """
 
+from collections import defaultdict
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Any, Callable, Dict, Generator, List, Tuple
+from typing import Any, Callable, Dict, Generator, List, Optional, Tuple
+from queue import SimpleQueue
+from priority_queue import PriorityQueue
 import pandas as pd
 
 @dataclass
@@ -21,23 +24,32 @@ class Timestamp():
         time_int = h*3600 + m * 60 + s
         return cls(time_str, time_int)
 
-@dataclass(unsafe_hash=True)
+
+@dataclass
 class Node:
     stop_name: str
     latitude: float
     longitude: float
     neighbours: List['Edge']
+    def __hash__(self) -> int:
+        return hash((self.stop_name, self.latitude, self.longitude))
+    
+    def __eq__(self, __value: object) -> bool:
+        return hash(self) == hash(__value) 
+    
+    def __str__(self) -> str:
+        return f"{self.stop_name} {self.longitude} {self.latitude}"
+    
+    def __repr__(self) -> str:
+        return str(self)
 
-@dataclass
+@dataclass(unsafe_hash=True)
 class Edge:
     departure_time: Timestamp
     arrival_time: Timestamp
     dest: Node
     company: str
     line: str
-
-
-
 
 
 class Graph:
@@ -72,7 +84,7 @@ class Graph:
             
             start_node.neighbours.append((Edge(dep_time, arr_time, end_node, company, line)))
 
-    def distinct_edge_bfs(self, node: Node, func: Callable[[Node, Edge], Any]) -> Generator:
+    def distinct_edge_dfs(self, node: Node, func: Callable[[Node, Edge], Any]) -> Generator:
         """
             Visits each distinct edge one time
             Distinct edge is one of the edges with same src and dest 
@@ -90,19 +102,79 @@ class Graph:
                     queue.append(dest)
                     yield func(current, edge)
     
+    def distinct_edge_bfs(self, node: Node, func: Callable[[Node, Edge], Any]) -> Generator:
+        """
+            Visits each distinct edge one time
+            Distinct edge is one of the edges with same src and dest 
+        """
+        visited: Tuple[Node, Node] = set()
+        queue = SimpleQueue()
+        queue.put_nowait(node)
+        while not queue.empty():
+            current = queue.get_nowait()
+            edges = current.neighbours
+            for edge in edges:
+                dest = edge.dest
+                id_tuple = (id(current), id(dest))
+                if id_tuple not in visited:
+                    visited.add(id_tuple)
+                    queue.put_nowait(dest)
+                    yield func(current, edge)
 
+
+    def dijkstra(self, start_node: Node, end_node: Node, start_time: Timestamp) -> Optional[List[Edge]]:
+        distance_lookup = defaultdict(lambda : (float('inf'), None))
+        prev: Dict[Node, Tuple[Node, Edge]] = defaultdict()
+        distance_lookup[start_node] = 0
+
+        def dijkstra_distance_strategy(node):
+            return distance_lookup[node]
+
+
+        queue = PriorityQueue(dijkstra_distance_strategy, start_node)
+        queue.enqueue(start_node, start_time)
+        while not queue.is_empty():
+            current = queue.dequeue()
+            if end_node == current:
+                return self.get_path(prev, start_node, end_node)
+            
+            edges = current.neighbours
+            node_time_lookup = {}
+            for edge in edges:
+                if edge.departure_time.time > start_time.time:
+                    if node_time_lookup.get(edge.dest, (float('inf'), None))[0] > edge.arrival_time.time:
+                        node_time_lookup[edge.dest] = edge.arrival_time.time, edge
+            print(node_time_lookup)
+            for node, (arival_time_int, edge) in node_time_lookup.items():
+                print(f"{edge.line} {edge.departure_time.time_str} {current.stop_name} -> {edge.arrival_time.time_str} {node.stop_name}")
+                distance_lookup[node] = arival_time_int
+                prev[node] = current, edge
+                queue.enqueue(node, edge.arrival_time.time)
+    
+    def get_path(prev: Dict[Node, Tuple[Edge, Node]], start_node: Node, end_node: Node):
+        current_node = end_node 
+        path = []
+        while current_node is not start_node:
+            next_node, edge = prev[current_node]
+            path.append(edge)
+            current_node = next_node 
+        return edge
 
 
 if __name__ == "__main__":
-    graph = Graph('connection_graph.csv')
+    # graph = Graph('connection_graph.csv')
     
-    def print_edge(node: Node, edge: Edge):
-        print(f"{node.stop_name} -> {edge.dest.stop_name}" )
-
-    k = list(graph.graph.keys())[0]
-    n = graph.graph[k]
-    gen = graph.distinct_edge_bfs(n, print_edge)
-
+    # def print_edge(node: Node, edge: Edge):
+    #     print(f"{node.stop_name} -> {edge.dest.stop_name}" )
+    # bus_stops = list(graph.graph.keys())
+    # k = bus_stops[0]
+    # k1 = bus_stops[1]
+    # n = graph.graph[k]
+    # n1 = graph.graph[k1]
+    # print(f"Going from {n.stop_name} to {n1.stop_name} at 10:30:10")
+    # gen = graph.dijkstra(n, n1, Timestamp.create_timestamp("10:30:10"))
+    # print(gen)
     
-    for _ in gen:
-        pass
+    pq = PriorityQueue(lambda n: n.longitude, Node("xx", 2, 3, []))
+    pq.enqueue(Node("sss", 0, 1, []), current_time=None)
+    pq.dequeue()
