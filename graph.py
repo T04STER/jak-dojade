@@ -5,12 +5,16 @@
 from collections import defaultdict
 from dataclasses import dataclass
 from decimal import Decimal
+from functools import cache
+import heapq
+import math
 from numbers import Number
 import time
-from typing import Any, Callable, Dict, Generator, List, Optional, Tuple
+from typing import Any, Callable, Dict, Generator, List, Literal, Optional, Tuple, Union
 from queue import SimpleQueue
-from unittest.mock import Mock
 from priority_queue import PriorityQueue
+from heapq_priority_item import PriorityItem
+import queue as q
 import pandas as pd
 
 @dataclass
@@ -23,7 +27,15 @@ class Timestamp():
     time: int
     @classmethod
     def create_timestamp(cls, time_str):
-        h, m, s = map(int, time_str.split(':'))
+        components = time_str.split(':')
+        if len(components) == 2:
+            h, m = map(int, components)
+            s = 0
+        elif len(components) == 3:
+            h, m, s = map(int, components)
+        else:
+            raise ValueError("Invalid time format!")
+        
         time_int = h*3600 + m * 60 + s
         return cls(time_str, time_int)
 
@@ -50,6 +62,27 @@ class Node:
     latitude: float
     longitude: float
     neighbours: List['Edge']
+
+    @cache
+    def distance(self, other: 'Node') -> int:
+        """
+            Distance between two points, ignores earth curvture.
+            Converts spherical coordinate into Carthesian x,y,z
+        """
+        radius = 6_371
+        self_latitude_rad = math.radians(self.latitude)
+        self_longitude_rad = math.radians(self.longitude)
+        other_latitude_rad = math.radians(other.latitude)
+        other_longitude_rad = math.radians(other.longitude)
+        self_x = math.cos(self_latitude_rad)*math.cos(self_longitude_rad)
+        self_y = math.sin(self_latitude_rad)*math.cos(self_longitude_rad)
+        self_z= math.sin(self_longitude_rad)
+        other_x = math.cos(other_latitude_rad) * math.cos(other_longitude_rad)
+        other_y = math.sin(other_latitude_rad) * math.cos(other_longitude_rad)
+        other_z = math.sin(other_longitude_rad)
+        distance  = math.sqrt((self_x - other_x)**2 + (self_y - other_y)**2 + (self_z - other_z)**2)
+        return radius*distance
+
     def __hash__(self) -> int:
         return hash((self.stop_name, self.latitude, self.longitude))
     
@@ -70,9 +103,14 @@ class Edge:
     company: str
     line: str
 
+    def get_seconds(self) -> int:
+        return self.arrival_time.time - self.departure_time.time
+
 
 class Graph:
-    def __init__(self, filepath: str):
+    def __init__(self, filepath: str, cost_estimation_scale=1_500, hop_penalty=500):
+        self.cost_estimation_scale = cost_estimation_scale
+        self.hop_penalty = hop_penalty
         self.graph: Dict[str, Node] = {}
         connections = pd.read_csv(filepath, low_memory=False)
         
@@ -104,29 +142,12 @@ class Graph:
             end_node = self.graph[end_stop_id]
             
             start_node.neighbours.append((Edge(dep_time, arr_time, end_node, company, line)))
-
-    def distinct_edge_dfs(self, node: Node, func: Callable[[Node, Edge], Any]) -> Generator:
-        """
-            Visits each distinct edge one time
-            Distinct edge is one of the edges with same src and dest 
-        """
-        visited: Tuple[Node, Node] = set()
-        queue = [node]
-        while queue:
-            current = queue.pop()
-            edges = current.neighbours
-            for edge in edges:
-                dest = edge.dest
-                id_tuple = (id(current), id(dest))
-                if id_tuple not in visited:
-                    visited.add(id_tuple)
-                    queue.append(dest)
-                    yield func(current, edge)
-    
+   
     def distinct_edge_bfs(self, node: Node, func: Callable[[Node, Edge], Any]) -> Generator:
         """
             Visits each distinct edge one time
             Distinct edge is one of the edges with same src and dest 
+            Used only for graph render 
         """
         visited: Tuple[Node, Node] = set()
         queue = SimpleQueue()
@@ -142,20 +163,23 @@ class Graph:
                     queue.put_nowait(dest)
                     yield func(current, edge)
 
-
-    def dijkstra(self, start_node: Node, end_node: Node, start_time: Timestamp) -> Optional[List[Edge]]:
-        distance_lookup: Dict[Node, Number] = defaultdict(lambda : float('inf'))
+    def dijkstra(self, start_node: Node, end_node: Node, start_time: Timestamp) -> Tuple[Optional[List[Edge]], Optional[Number], Optional[Number]]:
+        """
+            Inefficient dijkstra alghoritm on linked list priority queue,
+            first solution
+        """
+        distance: Dict[Node, Number] = defaultdict(lambda : float('inf'))
         prev: Dict[Node, Tuple[Node, Edge]] = defaultdict()
-        distance_lookup[start_node] = 0
+        distance[start_node] = 0
 
         def dijkstra_distance_strategy(node):
-            return distance_lookup[node]
+            return distance[node]
 
         queue = PriorityQueue(dijkstra_distance_strategy, start_node, start_time)
         while not queue.is_empty():
             current, arrival = queue.dequeue()
             if end_node is current:
-                return self.get_path(prev, start_node, end_node)
+                return self.get_path(prev, start_node, end_node), len(distance)
 
             edges = current.neighbours
             node_time_lookup: Dict[Node, Timestamp] = {}
@@ -167,22 +191,109 @@ class Graph:
             
 
             for node, (arival_time, edge) in node_time_lookup.items():
-                if distance_lookup[node] > arival_time.time:
-                    distance_lookup[node] = arival_time.time
+                if distance[node] > arival_time.time:
+                    distance[node] = arival_time.time
                     prev[node] = current, edge
                     queue.enqueue(node, arival_time)
         
-        return None
+        return None, None
     
-    def get_path(self, prev: Dict[Node, Tuple[Edge, Node]], start_node: Node, end_node: Node):
-        current_node = end_node 
-        path = []
-        while current_node is not start_node:
-            next_node, edge = prev[current_node]
-            path.append(edge)
-            current_node = next_node 
-        return list(reversed(path))
+    def dijkstra_py_prority_que(self, start_node: Node, end_node: Node, start_time: Timestamp) -> Tuple[Optional[List[Edge]], Optional[Number], Optional[Number]]:
+        distance: Dict[Node, Number] = defaultdict(lambda : float('inf'))
+        prev: Dict[Node, Tuple[Node, Edge]] = defaultdict()
+        distance[start_node] = 0
 
+        queue: q.PriorityQueue[PriorityItem] = q.PriorityQueue()
+        queue.put_nowait(PriorityItem(start_time, start_node))
+        while not queue.empty():
+            priority_item = queue.get_nowait()
+            current = priority_item.item
+            arrival = priority_item.priority
+            if end_node is current:
+                return self.get_path(prev, start_node, end_node), len(distance), distance[current]
+            
+            edges = current.neighbours
+            for edge in edges:
+                if edge.departure_time >= arrival and distance[edge.dest] > edge.arrival_time.time:
+                    queue.put_nowait(PriorityItem(edge.arrival_time, edge.dest))
+                    distance[edge.dest] = edge.arrival_time.time
+                    prev[edge.dest] = current, edge
+            
+        return None, None, None
+        
+    def get_path(self, prev: Dict[Node, Tuple[Edge, Node]], start_node: Node, end_node: Node) -> List[Edge]:
+            current_node = end_node 
+            path = []
+            while current_node is not start_node:
+                next_node, edge = prev[current_node]
+                path.append(edge)
+                current_node = next_node 
+            return list(reversed(path))
+
+    def dijkstra_heapq(self, start_node: Node, end_node: Node, start_time: Timestamp) -> Tuple[Optional[List[Edge]], Optional[Number], Optional[Number]]:
+        distance: Dict[Node, Number] = defaultdict(lambda : float('inf'))
+        prev: Dict[Node, Tuple[Node, Edge]] = defaultdict(lambda: None)
+        distance[start_node] = 0
+
+        queue: List[PriorityItem] = [PriorityItem(start_time.time, start_time, start_node)] 
+        while queue:
+            priority_item = heapq.heappop(queue)
+            current = priority_item.item
+            arrival = priority_item.arrival
+            if end_node is current:
+                return self.get_path(prev, start_node, end_node), len(distance), distance[current]
+            
+            edges = current.neighbours
+            for edge in edges:
+                if edge.departure_time >= arrival and distance[edge.dest] > edge.arrival_time.time:
+                    heapq.heappush(queue, PriorityItem(edge.arrival_time.time, edge.arrival_time, edge.dest, edge))
+                    distance[edge.dest] = edge.arrival_time.time
+                    prev[edge.dest] = current, edge
+            
+        return None, None, None
+    
+
+    def a_star(self, start_node: Node, end_node: Node, start_time: Timestamp, criteria: Union[Literal['time'], Literal['hops']] = 'time') -> Tuple[Optional[List[Edge]], Optional[Number], Optional[Number]]:
+        distance: Dict[Node, Number] = defaultdict(lambda : float('inf'))
+        prev: Dict[Node, Tuple[Node, Edge]] = defaultdict(lambda: None)
+        distance[start_node] = 0
+
+        def time_cost_func(source: Node, edge: Edge):
+            return edge.arrival_time.time
+
+        def least_line_change_cost_func(source: Node, edge: Edge):
+            hop_penalty = self.hop_penalty
+            previous = prev[source]
+            if previous is not None:
+                prev_edge = previous[1]
+                prev_line = prev_edge.line
+                if prev_line == edge.line:
+                    hop_penalty = 0
+            return distance[source] + hop_penalty 
+
+        def cost_estimate_func(edge: Edge):
+            return self.cost_estimation_scale*end_node.distance(edge.dest)
+            
+        cost_func_reference = time_cost_func if criteria == 'time' else least_line_change_cost_func
+        
+        queue: List[PriorityItem] = [PriorityItem(0, start_time, start_node)] 
+        while queue:
+            priority_item = heapq.heappop(queue)
+            current = priority_item.item
+            arrival = priority_item.arrival 
+            if end_node is current:
+                return self.get_path(prev, start_node, end_node), len(distance), distance[current]
+            
+            edges = current.neighbours
+            for edge in edges:
+                destination_cost =  cost_func_reference(current, edge)
+                if edge.departure_time >= arrival and distance[edge.dest] > destination_cost:
+                    distance[edge.dest] = destination_cost
+                    estimated_cost = destination_cost + cost_estimate_func(edge)
+                    heapq.heappush(queue, PriorityItem(estimated_cost, edge.arrival_time, edge.dest))
+                    prev[edge.dest] = current, edge
+            
+        return None, None, None
 
 if __name__ == "__main__":
     d = time.time()
@@ -197,11 +308,12 @@ if __name__ == "__main__":
     k1 = "ZOO"
     n = graph.graph[k]
     n1 = graph.graph[k1]
+    ld = time.time()
     print(f"Going from {n.stop_name} to {n1.stop_name} at 21:05")
-    path = graph.dijkstra(n, n1, Timestamp.create_timestamp("21:05:10"))
-    
+    e=time.time()
+    path, node, _= graph.a_star(n, n1, Timestamp.create_timestamp("21:05:10"))
     print(n.stop_name, end="")
     for edge in path:
         print(f" {edge.departure_time.time_str} -> {edge.arrival_time.time_str} {edge.dest.stop_name} [{edge.line}]")
-    e=time.time()
-    print(f"Finished at: { e }, it took {e-d}")
+    print(f"Delta {time.time()-e}")
+    print(f"Visited {node}, path len {len(path)}")

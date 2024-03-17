@@ -1,7 +1,13 @@
+"""
+    Linked list priority queue
+    used only in dijkstra method 
+"""
+
 from typing import Callable, Optional, TYPE_CHECKING, Tuple
 
 if TYPE_CHECKING:
     from graph import Node, Timestamp
+
 
 
 class PriorityQueueNode:
@@ -11,7 +17,7 @@ class PriorityQueueNode:
         self.next: Optional[PriorityQueueNode] = next
     def __str__(self):
         return f"{str(self.node)} {str(self.next.node) if self.next else 'last'}"
-    
+
     
 class PriorityQueue:
     """
