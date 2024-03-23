@@ -1,4 +1,5 @@
 # Wyniki testów porównujących wagi funkcji kary w algorytmie A*
+
 1. Łozina - Nowego Osiedla I -> Ferma - stadnina koni @ 19:30:00
 2. Biegasa -> ROD Zgoda @ 19:26:00
 3. Jerzmanowska nr 9 -> Szczodre - stawy @ 21:23:00

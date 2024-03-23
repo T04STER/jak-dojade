@@ -100,7 +100,7 @@ class Node:
         return self.stop_name
 
     def __repr__(self) -> str:
-        return str(self) + f" {self.longitude} {self.latitude}"
+        return str(self)
 
 
 @dataclass(unsafe_hash=True)
@@ -116,7 +116,8 @@ class Edge:
 
 
 class Graph:
-    def __init__(self, filepath: str, cost_estimation_scale=1_500, hop_penalty=500):
+    def __init__(self, filepath: str, cost_estimation_scale=1_100, hop_penalty=920, hub_bonus=0):
+        self.hub_bonus = hub_bonus
         self.cost_estimation_scale = cost_estimation_scale
         self.hop_penalty = hop_penalty
         self.graph: Dict[str, Node] = {}
@@ -155,7 +156,7 @@ class Graph:
         """
         Visits each distinct edge one time
         Distinct edge is one of the edges with same src and dest
-        Used only for graph render
+        Used only for graph display
         """
         visited: Tuple[Node, Node] = set()
         queue = SimpleQueue()
@@ -294,13 +295,14 @@ class Graph:
         end_node: Node,
         start_time: Timestamp,
         criteria: Union[Literal["time"], Literal["hops"]] = "time",
+        better_heurestic: bool=False
     ) -> Tuple[Optional[List[Edge]], Optional[Number], Optional[Number]]:
         distance: Dict[Node, Number] = defaultdict(lambda: float("inf"))
         prev: Dict[Node, Tuple[Node, Edge]] = defaultdict(lambda: None)
         distance[start_node] = 0
 
         def time_cost_func(source: Node, edge: Edge):
-            return edge.arrival_time.time
+            return edge.arrival_time.time  # to reduce num of opperation
 
         def least_line_change_cost_func(source: Node, edge: Edge):
             hop_penalty = self.hop_penalty
@@ -315,8 +317,15 @@ class Graph:
         def cost_estimate_func(edge: Edge):
             return self.cost_estimation_scale * end_node.distance(edge.dest)
 
+        def better_cost_estimate_func(edge: Edge):
+            return cost_estimate_func(edge) - self.hub_bonus*(len(edge.dest.neighbours))
+
         cost_func_reference = (
             time_cost_func if criteria == "time" else least_line_change_cost_func
+        )
+
+        cost_estimate__reference = (
+            cost_estimate_func if not better_heurestic else better_cost_estimate_func
         )
 
         queue: List[PriorityItem] = [PriorityItem(0, start_time, start_node)]
@@ -328,7 +337,7 @@ class Graph:
                 return (
                     self.get_path(prev, start_node, end_node),
                     len(distance),
-                    distance[current],
+                    distance[current] - (start_time.time if criteria=='time' else 0),
                 )
 
             edges = current.neighbours
@@ -339,7 +348,7 @@ class Graph:
                     and distance[edge.dest] > destination_cost
                 ):
                     distance[edge.dest] = destination_cost
-                    estimated_cost = destination_cost + cost_estimate_func(edge)
+                    estimated_cost = destination_cost + cost_estimate__reference(edge)
                     heapq.heappush(
                         queue,
                         PriorityItem(estimated_cost, edge.arrival_time, edge.dest),

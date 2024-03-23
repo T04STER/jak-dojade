@@ -8,7 +8,10 @@ if TYPE_CHECKING:
 
 @dataclass(order=True)
 class PriorityItem:
-    """Utility class for heapq and queue.PriorityQueue"""
+    """
+        Utility class for heapq and queue.PriorityQueue
+        Based on: https://docs.python.org/3/library/queue.html
+    """
     priority: int
     arrival: 'Timestamp' = field(compare=False) 
     item: 'Node' = field(compare=False)
