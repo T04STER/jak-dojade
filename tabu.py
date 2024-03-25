@@ -156,7 +156,7 @@ if __name__ == '__main__':
         graph.graph["Kwidzyńska"],
         graph.graph["KARŁOWICE"],
         graph.graph["FAT"],
-graph.graph["GALERIA DOMINIKAŃSKA"],
+    graph.graph["GALERIA DOMINIKAŃSKA"],
     graph.graph["PL. GRUNWALDZKI"],
     graph.graph["Kwidzyńska"],
     graph.graph["KARŁOWICE"],

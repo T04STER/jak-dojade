@@ -149,6 +149,8 @@ class Graph:
             start_node.neighbours.append(
                 (Edge(dep_time, arr_time, end_node, company, line))
             )
+        for node in self.graph.values():
+            node.neighbours = sorted(node.neighbours, key=lambda e: e.departure_time.time)
 
     def distinct_edge_bfs(
         self, node: Node, func: Callable[[Node, Edge], Any]
