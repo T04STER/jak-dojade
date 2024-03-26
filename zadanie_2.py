@@ -85,12 +85,12 @@ def main():
     end_stop_name_list = end_stop_name_list_str.split(';') 
     start_time = Timestamp.create_timestamp(args.t)
     criteria = 'time' if args.k == 't' else 'hops' 
-    
     graph = Graph(DATA_FILE_PATH, COST_ESTIMATION_SCALE, HOP_PENALTY)
     tabu = Tabu(graph, criteria)
     alghoritm_start = time.time()
     start = get_node(graph, start_stop_name)
     stop_nodes = get_stop_nodes(end_stop_name_list, graph)
+    tabu.TABU_LEN = len(stop_nodes)-1
     path, solution, cost =tabu.tabu_search_v2(start, stop_nodes, start_time)
     alghoritm_end = time.time()
     print(f"Czas algorytmu {alghoritm_end-alghoritm_start}\nWartość funkcji kosztu {cost}", file=sys.stderr)
